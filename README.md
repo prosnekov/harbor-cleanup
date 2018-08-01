@@ -28,6 +28,9 @@ optional arguments:
   -c PRESERVE_COUNT, --preserve-count PRESERVE_COUNT
                         keep the last n number of image tags (by reverse
                         alphanumerical order); defaults to 5
+  -k FILE_PATH, --keep-file FILE_PATH
+                        Keep the images mentioned in the file. The file should
+                        contain one image & tag per record (project/image:tag)
 
 required arguments:
   -i URL, --url URL     URL of the Harbor instance
