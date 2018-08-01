@@ -2,9 +2,8 @@ import argparse
 import logging
 import sys
 import requests
-from enum import Enum
 
-__version_info__ = ('17', '06', '2')
+__version_info__ = ('18', '07', '31')
 __version__ = '.'.join(__version_info__)
 
 def main():
@@ -15,7 +14,7 @@ def main():
             raise argparse.ArgumentTypeError("%s is an invalid positive int value" % value)
         return ivalue
 
-    parser = argparse.ArgumentParser(prog='harbor-cleanup', version='%(prog)s version '+__version__, description="Cleans up images in a Harbor project.")
+    parser = argparse.ArgumentParser(prog='harbor-cleanup', description="Cleans up images in a Harbor project.")
     req_grp = parser.add_argument_group(title='required arguments')
     parser.add_argument('-d', '--debug', action='store_true', help="turn on debugging mode")
     parser.add_argument('-q', '--quiet', action='store_true', help="suppress console output")
@@ -24,10 +23,10 @@ def main():
     req_grp.add_argument('-u', '--user', required=True, type=str, help="valid Harbor user with proper access")
     req_grp.add_argument('-p', '--password', required=True, type=str, help="password for Harbor user")
     parser.add_argument('-c', '--preserve-count', type=check_positive, help="keep the last n number of image tags (by reverse alphanumerical order); defaults to 5", default=5)
+    parser.add_argument('-k', '--keep-file', type=str, help="Do not delete images in this file (one record per image)")
     parser.add_argument('project', type=str, help="name of the Harbor project to clean")
 
     if len(sys.argv[1:])==0:
-        parser.print_version()
         parser.print_help()
         parser.exit()
 
@@ -47,16 +46,15 @@ def main():
     HARBOR_USER = args.user
     HARBOR_PASS = args.password
     PRESERVE_COUNT = args.preserve_count
-
-    Method = Enum('GET', 'DELETE')
+    KEEP_FILE = args.keep_file
 
     def return_json(method, url):
         try:
-            if method == Method.GET:
+            if method == 'GET':
                 response = requests.get(url, auth=(HARBOR_USER, HARBOR_PASS))
                 response.raise_for_status()
                 return response.json()
-            elif method == Method.DELETE:
+            elif method == 'DELETE':
                 response = requests.delete(url, auth=(HARBOR_USER, HARBOR_PASS))
                 response.raise_for_status()
             else:
@@ -68,7 +66,7 @@ def main():
 
     def get_project_id_by_project_name(project_name):
         logger.info('Retrieving project id for %s', project_name)
-        projects = return_json(Method.GET, HARBOR_URL+'/api/projects?project_name='+project_name)
+        projects = return_json('GET', HARBOR_URL+'/api/projects?project_name='+project_name)
         if project_name != projects[0]['name']:
             logger.error('No such project %s found.', project_name)
             sys.exit(1)
@@ -78,25 +76,44 @@ def main():
 
     def get_images_in_project(project_id):
         logger.info('Retrieving images in %s', PROJECT_NAME)
-        images = return_json(Method.GET, HARBOR_URL+'/api/repositories?project_id='+project_id)
+        images = return_json('GET', HARBOR_URL+'/api/repositories?project_id='+project_id)
         logger.info('Images: %s', images)
         return images
 
     def get_tags_from_image(image):
         logger.info('Retrieving tags for image %s', image)
-        tags = return_json(Method.GET, HARBOR_URL+'/api/repositories/tags?repo_name='+image)
+        tags = return_json('GET', HARBOR_URL+'/api/repositories/tags?repo_name='+image)
         logger.info('Tags: %s', tags)
         return tags
 
-    def delete_tag(image, tag):
+    def get_digest_from_tag(image, tag):
+        response = return_json('GET', HARBOR_URL+'/api/repositories/manifests?repo_name='+image+'&tag='+tag)
+        digest = response['manifest']['config']['digest']
+        return digest
+
+    def delete_tag(image, tag, digest):
         if args.dry_run:
-            logger.info('Would have deleted %s:%s', image, tag)
+            logger.info('Would have deleted %s:%s %s', image, tag, digest)
         else:
-            logger.info('Deleting %s:%s', image, tag)
-            return_json(Method.DELETE, HARBOR_URL+'/api/repositories?repo_name='+image+'&tag='+tag)
+            logger.info('Deleting %s:%s %s', image, tag, digest)
+            return_json('DELETE', HARBOR_URL+'/api/repositories?repo_name='+image+'&tag='+tag)
+
+    def get_tags_to_keep(keep_file):
+        tags_to_keep = []
+        if keep_file:
+            logger.info("Reading list of items to keep from %s", keep_file)
+            file = open(keep_file, 'r')
+            for line in file:
+                image,tag = line.strip().split(':')
+                digest = get_digest_from_tag(image, tag)
+                tags_to_keep.append(digest)
+            file.close()
+            logger.info("There are %s items to keep", len(tags_to_keep))
+        return tags_to_keep
 
     PROJECT_ID = get_project_id_by_project_name(PROJECT_NAME)
     IMAGES = get_images_in_project(PROJECT_ID)
+    IMAGES_TO_KEEP = get_tags_to_keep(KEEP_FILE)
 
     if not IMAGES:
         logger.info('No images found. Nothing to do.')
@@ -107,7 +124,11 @@ def main():
         if len(TAGS) > PRESERVE_COUNT:
             tags_to_delete = TAGS[:-PRESERVE_COUNT]
             for tag in tags_to_delete:
-                delete_tag(image, tag)
+                digest = get_digest_from_tag(image, tag)
+                if digest in IMAGES_TO_KEEP:
+                    logger.warn('Keeping pinned image %s:%s %s', image, tag, digest)
+                else:
+                    delete_tag(image, tag, digest)
             logger.info('%s cleaned successfully', image)
         else:
             logger.info('%s does not need to be cleaned up', image)
