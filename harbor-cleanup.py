@@ -2,8 +2,9 @@ import argparse
 import logging
 import sys
 import requests
+from natsort import natsorted
 
-__version_info__ = ('18', '07', '31')
+__version_info__ = ('19', '06', '0')
 __version__ = '.'.join(__version_info__)
 
 def main():
@@ -120,7 +121,7 @@ def main():
         sys.exit(0)
 
     for image in IMAGES:
-        TAGS = get_tags_from_image(image)
+        TAGS = natsorted(get_tags_from_image(image))
         if len(TAGS) > PRESERVE_COUNT:
             tags_to_delete = TAGS[:-PRESERVE_COUNT]
             for tag in tags_to_delete:
