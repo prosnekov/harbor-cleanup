@@ -125,11 +125,14 @@ def main():
         if len(TAGS) > PRESERVE_COUNT:
             tags_to_delete = TAGS[:-PRESERVE_COUNT]
             for tag in tags_to_delete:
-                digest = get_digest_from_tag(image, tag)
-                if digest in IMAGES_TO_KEEP:
-                    logger.warn('Keeping pinned image %s:%s %s', image, tag, digest)
-                else:
-                    delete_tag(image, tag, digest)
+                try:
+                    digest = get_digest_from_tag(image, tag)
+                    if digest in IMAGES_TO_KEEP:
+                        logger.warn('Keeping pinned image %s:%s %s', image, tag, digest)
+                    else:
+                        delete_tag(image, tag, digest)
+                except:
+                    logger.warn('Failed to remove %s:%s', image, tag)
             logger.info('%s cleaned successfully', image)
         else:
             logger.info('%s does not need to be cleaned up', image)
