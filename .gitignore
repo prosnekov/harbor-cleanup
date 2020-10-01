@@ -2,3 +2,4 @@ build
 dist
 *.spec
 .vscode
+keep_tags.txt

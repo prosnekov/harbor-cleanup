@@ -2,7 +2,6 @@ import argparse
 import logging
 import sys
 import requests
-from natsort import natsorted
 
 __version_info__ = ('19', '06', '0')
 __version__ = '.'.join(__version_info__)
@@ -25,6 +24,7 @@ def main():
     req_grp.add_argument('-p', '--password', required=True, type=str, help="password for Harbor user")
     parser.add_argument('-c', '--preserve-count', type=check_positive, help="keep the last n number of image tags (by reverse alphanumerical order); defaults to 5", default=5)
     parser.add_argument('-k', '--keep-file', type=str, help="Do not delete images in this file (one record per image)")
+    parser.add_argument('-pt', '--protected-tags', action='append', help="Do not delete images with these tags. Example: -pt develop -pt latest -pt stable")
     parser.add_argument('project', type=str, help="name of the Harbor project to clean")
 
     if len(sys.argv[1:])==0:
@@ -48,6 +48,7 @@ def main():
     HARBOR_PASS = args.password
     PRESERVE_COUNT = args.preserve_count
     KEEP_FILE = args.keep_file
+    PROTECTED_TAGS = args.protected_tags
 
     def return_json(method, url):
         try:
@@ -67,39 +68,41 @@ def main():
 
     def get_project_id_by_project_name(project_name):
         logger.info('Retrieving project id for %s', project_name)
-        projects = return_json('GET', HARBOR_URL+'/api/projects?project_name='+project_name)
-        if project_name != projects[0]['name']:
+        projects = return_json('GET', HARBOR_URL+'/api/search?q='+project_name)
+        if project_name != projects['project'][0]['name']:
             logger.error('No such project %s found.', project_name)
             sys.exit(1)
-        project_id = str(projects[0]['project_id'])
+        project_id = str(projects['project'][0]['project_id'])
         logger.info('Project ID is %s', project_id)
         return project_id
 
     def get_images_in_project(project_id):
         logger.info('Retrieving images in %s', PROJECT_NAME)
         images = return_json('GET', HARBOR_URL+'/api/repositories?project_id='+project_id)
-        logger.info('Images: %s', images)
+        for image in images:
+            logger.info('Images: %s', image['name'])
         return images
 
     def get_tags_from_image(image):
         logger.info('Retrieving tags for image %s', image)
-        tags = return_json('GET', HARBOR_URL+'/api/repositories/tags?repo_name='+image)
-        logger.info('Tags: %s', tags)
+        tags = return_json('GET', HARBOR_URL+'/api/repositories/'+image+'/tags')
+        for tag in tags:
+            logger.info('Tags: %s', tag['name'])
         return tags
 
     def get_digest_from_tag(image, tag):
-        response = return_json('GET', HARBOR_URL+'/api/repositories/manifests?repo_name='+image+'&tag='+tag)
+        response = return_json('GET', HARBOR_URL+'/api/repositories/'+image+'/tags/'+tag+'/manifest/')
         digest = response['manifest']['config']['digest']
         return digest
 
-    def delete_tag(image, tag, digest):
+    def delete_tag(image, tag):
         if args.dry_run:
-            logger.info('Would have deleted %s:%s %s', image, tag, digest)
+            logger.info('Would have deleted %s:%s', image, tag)
         else:
-            logger.info('Deleting %s:%s %s', image, tag, digest)
-            return_json('DELETE', HARBOR_URL+'/api/repositories?repo_name='+image+'&tag='+tag)
+            logger.info('Deleting %s:%s', image, tag)
+            return_json('DELETE', HARBOR_URL+'/api/repositories/'+image+'/tags/'+tag)
 
-    def get_tags_to_keep(keep_file):
+    def get_tags_to_keep(keep_file, protected_tags):
         tags_to_keep = []
         if keep_file:
             logger.info("Reading list of items to keep from %s", keep_file)
@@ -107,35 +110,48 @@ def main():
             for line in file:
                 image,tag = line.strip().split(':')
                 digest = get_digest_from_tag(image, tag)
+                logger.info("Image %s:%s will be kept", image, tag)
                 tags_to_keep.append(digest)
             file.close()
-            logger.info("There are %s items to keep", len(tags_to_keep))
-        return tags_to_keep
 
+        if protected_tags:
+            logger.info("Reading list of protected tags %s", protected_tags)
+            for tag in protected_tags:
+                for image in IMAGES:
+                    try:
+                        digest = get_digest_from_tag(image['name'], tag)
+                        tags_to_keep.append(digest)
+                        logger.info("Image %s:%s will be kept", image['name'], tag)
+                    except:
+                        logger.warning('Image %s:%s not found', image['name'], tag)
+        logger.info("There are %s items to keep", len(tags_to_keep))
+        return tags_to_keep
+    
     PROJECT_ID = get_project_id_by_project_name(PROJECT_NAME)
     IMAGES = get_images_in_project(PROJECT_ID)
-    IMAGES_TO_KEEP = get_tags_to_keep(KEEP_FILE)
+    IMAGES_TO_KEEP = get_tags_to_keep(KEEP_FILE, PROTECTED_TAGS)
 
     if not IMAGES:
         logger.info('No images found. Nothing to do.')
         sys.exit(0)
 
     for image in IMAGES:
-        TAGS = natsorted(get_tags_from_image(image))
+        RAW_TAGS=get_tags_from_image(image['name'])
+        TAGS = sorted(RAW_TAGS, key=lambda k: k['created'], reverse = True)
         if len(TAGS) > PRESERVE_COUNT:
             tags_to_delete = TAGS[:-PRESERVE_COUNT]
             for tag in tags_to_delete:
                 try:
-                    digest = get_digest_from_tag(image, tag)
+                    digest = get_digest_from_tag(image['name'], tag['name'])
                     if digest in IMAGES_TO_KEEP:
-                        logger.warn('Keeping pinned image %s:%s %s', image, tag, digest)
+                        logger.warning('Keeping pinned image %s:%s %s', image['name'], tag['name'], digest)
                     else:
-                        delete_tag(image, tag, digest)
+                        delete_tag(image['name'], tag['name'])
                 except:
-                    logger.warn('Failed to remove %s:%s', image, tag)
-            logger.info('%s cleaned successfully', image)
+                    logger.warning('Failed to remove %s:%s', image['name'], tag['name'])
+            logger.info('%s cleaned successfully', image['name'])
         else:
-            logger.info('%s does not need to be cleaned up', image)
+            logger.info('%s does not need to be cleaned up', image['name'])
 
 if __name__ == '__main__':
     main()

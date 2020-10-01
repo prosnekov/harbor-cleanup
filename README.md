@@ -2,7 +2,11 @@
 Automated script to delete tags from a [Harbor](https://github.com/vmware/harbor) registry
 
 ## Binaries
-Binaries are available for Linux, OS X, and Windows. Refer to the latest [release](https://github.com/cavemandaveman/harbor-cleanup/releases).
+This fork was updated to work againt Harbor **1.9.X**
+
+Authors:
+- [Original repo](https://github.com/cavemandaveman/harbor-cleanup)
+- [Used fork](https://github.com/clearent/harbor-cleanup)
 
 ## Building
 *   Run `pip install -r requirements.txt`
@@ -31,6 +35,10 @@ optional arguments:
   -k FILE_PATH, --keep-file FILE_PATH
                         Keep the images mentioned in the file. The file should
                         contain one image & tag per record (project/image:tag)
+  -pt TAG1              Global protected tags. Images with tags listed within 
+                        this options will be kept in all repositories in defined project.
+                        To protect multiple tags provide this key multiple times. Example: 
+                        -pt develop -pt latest -pt stable
 
 required arguments:
   -i URL, --url URL     URL of the Harbor instance
@@ -40,5 +48,5 @@ required arguments:
   ```
 
 ## Note
-*   This tool only works against [v0.5.0](https://github.com/vmware/harbor/releases/tag/0.5.0) of Harbor
-*   This will delete images, however the images will still take up disk space until you run [Garbage Collection](https://github.com/vmware/harbor/blob/master/docs/user_guide.md#deleting-repositories)
+*   This tool shoud works against v1.X.X but have been tested only against 1.9.4 of Harbor
+*   This will delete images, however the images will still take up disk space until you run [Garbage Collection](https://goharbor.io/docs/1.10/administration/garbage-collection/
